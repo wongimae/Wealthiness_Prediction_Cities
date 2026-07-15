@@ -1,7 +1,7 @@
 # README
 
 ## Overview
-This project implements a Multi-gate Mixture-of-Experts (MMOE) model with Swin Transformer for fine-grained image-based wealthiness classification. It includes two Python modules: `data.py` for data preprocessing and dataset creation, and `model.py` for the implementation of the MMOE model and its training pipeline.
+This project implements a Multi-gate Mixture-of-Experts (MMOE) model with Swin Transformer for fine-grained image-based wealthiness classification, trained on pairwise street-view comparisons from Place Pulse 2.0. The pipeline spans raw data assembly (`prepare_data.py`), TrueSkill-based label scoring and dataset construction (`data.py`), model definition and training (`model.py`, `train.py`), evaluation (`analyze.py`), and inference on new images (`predict.py`).
 
 ---
 
@@ -58,18 +58,37 @@ unzip data/place-pulse-2.0.zip -d data/
 
 This extracts to `data/place-pulse-2.0/`, containing `votes.tsv`, `locations.tsv`, `places.tsv`, `studies.tsv`, `qscores.tsv`, and `images/`. Run `prepare_data.py` afterward to build the wealthy-study votes dataframe used for training.
 
-### 1. `data.py`
-- **Purpose:** Prepares the dataset and processes comparisons to compute TrueSkill scores.
+### 1. `prepare_data.py`
+- **Purpose:** Builds the raw pairwise-vote dataframe from the Place Pulse 2.0 dump.
 - **Key Features:**
-  - **`RegressionDataset`:** A custom PyTorch dataset to handle image preprocessing and loading.
-  - **TrueSkill Algorithm:** Updates image scores based on temporal decay and spatial influence.
-  - **`preprocess_csv`:** Processes input CSV data to compute wealthiness labels.
-  - **Transforms:** Includes CLAHE preprocessing and feature extraction using a pre-trained model.
+  - Filters `votes.tsv` to the "wealthy" comparison study (`WEALTHY_STUDY_ID`).
+  - Joins votes to image file paths and (lat, lon) locations via `locations.tsv` and the `images/` directory.
+  - Writes `data/wealthy_votes.pkl` (pickle, not CSV, since locations are tuples).
 
-### 2. `model.py`
-- **Purpose:** Defines the MMOE model and integrates it with the Swin Transformer for multi-task classification.
+### 2. `data.py`
+- **Purpose:** Turns pairwise votes into a labeled image dataset ready for training.
 - **Key Features:**
-  - **`MMOEModel`:** Implements the MMOE architecture with expert and gate networks.
-  - **`build_classification_trainer`:** Configures and returns a Hugging Face `Trainer` for training the model.
-  - **Base Model:** Utilizes a pre-trained Swin Transformer for feature extraction.
+  - **TrueSkill algorithm** (`update_trueskill_scores` and friends): Converts pairwise win/loss/draw comparisons into a continuous per-image score, weighted by temporal decay (`compute_temporal_decay`) and spatial influence (`compute_spatial_influence`).
+  - **`preprocess_csv`:** Runs the TrueSkill pass over all votes, then buckets scores into 2 or 3 wealthiness classes by mean/std thresholds.
+  - **`RegressionDataset`:** PyTorch `Dataset` that loads images, applies CLAHE contrast enhancement, and runs the train/val/test transform pipeline.
+  - **`build_dataset_and_feacture`:** End-to-end entry point — loads the pickle, scores/labels it, and returns train/val/test `Dataset`s plus the model's feature extractor.
+
+### 3. `model.py`
+- **Purpose:** Defines the MMOE model and its Hugging Face `Trainer`-based training loop.
+- **Key Features:**
+  - **`MMOEModel`:** MMOE architecture (5 experts, 3 gated task towers by default) on top of a pre-trained Swin Transformer backbone.
+  - **`build_classification_trainer`:** Builds inverse-frequency class weights (so training can't collapse to the majority class), then configures a `Trainer` with cosine LR scheduling, fp16, early stopping (patience 3), and epoch checkpointing.
+  - **`CheckpointProgressCallback`:** Prints plain-text (non-`\r`) progress toward the next checkpoint, so progress is readable via `tail -f` on a log file.
+
+### 4. `train.py`
+- **Purpose:** CLI entry point that wires `data.py` and `model.py` together, trains, and evaluates on the held-out test set. See Pipeline step 4 for usage.
+
+### 5. `analyze.py`
+- **Purpose:** Loads a trained checkpoint (`runs/wealthiness/final` by default) and reports a confusion matrix plus per-class precision/recall/F1 on the test set — use before trusting a model to confirm it isn't collapsing to one class.
+
+### 6. `predict.py`
+- **Purpose:** Runs inference on new images (a file, directory, or glob pattern), applying the same CLAHE preprocessing used in training. Outputs `file_name, class, lat, lon` per image, either printed or written to a CSV (lat/lon parsed from the filename).
+
+### 7. `requirements.txt`
+- **Purpose:** Pinned-free dependency list (`torch`, `torchvision`, `transformers`, `accelerate`, `numpy`, `pandas`, `scikit-learn`, `scipy`, `opencv-python`, `Pillow`, `tqdm`, `geopy`) for setting up a fresh venv per Pipeline step 1.
 
