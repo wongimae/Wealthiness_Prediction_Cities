@@ -1,0 +1,12 @@
+torch
+torchvision
+transformers
+accelerate
+numpy
+pandas
+scikit-learn
+scipy
+opencv-python
+Pillow
+tqdm
+geopy
